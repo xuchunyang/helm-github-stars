@@ -208,46 +208,30 @@ METHOD is a funcall symbol, call it for a list of stars and repos."
   (let ((stars-list [])
         (repos-list [])
         (cache-hash-table (make-hash-table :test 'equal)))
-    (if helm-github-stars-token
-        (progn
-          ;; Fetch user's starred repositories
-          (mapc (lambda (item)
-                  (setq stars-list
-                        (vconcat stars-list
-                                 (vector (concat
-                                          (cdr (assoc 'full_name item))
-                                          " - "
-                                          (cdr (assoc 'description item)))))))
-                (hgs/request-github-stars-by-token))
-          ;; Fetch user's repositories (inlucding private repos, if possible)
-          (mapc (lambda (item)
-                  (setq repos-list
-                        (vconcat repos-list
-                                 (vector (concat
-                                          (cdr (assoc 'full_name item))
-                                          " - "
-                                          (cdr (assoc 'description item)))))))
-                (hgs/request-github-repos-by-token)))
-      ;; Fetch user's starred repositories
-      (let ((next-request t)
-            (current-page 1))
-        (while next-request
-          (let ((response (hgs/parse-github-response (hgs/request-github-stars current-page))))
-            (if (= 0 (length response))
-                (setq next-request nil)
-              (progn
-                (setq stars-list (vconcat stars-list response))
-                (setq current-page (1+ current-page)))))))
-      ;; Fetch user's repositories
-      (let ((next-request t)
-            (current-page 1))
-        (while next-request
-          (let ((response (hgs/parse-github-response (hgs/request-github-repos current-page))))
-            (if (= 0 (length response))
-                (setq next-request nil)
-              (progn
-                (setq repos-list (vconcat repos-list response))
-                (setq current-page (1+ current-page))))))))
+    (when helm-github-stars-token
+      ;; Fetch private repositories
+      (let ((response (hgs/parse-github-response (hgs/request-github-private-repos))))
+        (setq repos-list (vconcat repos-list response))))
+    ;; Fetch user's starred repositories
+    (let ((next-request t)
+          (current-page 1))
+      (while next-request
+        (let ((response (hgs/parse-github-response (hgs/request-github-stars current-page))))
+          (if (= 0 (length response))
+              (setq next-request nil)
+            (progn
+              (setq stars-list (vconcat stars-list response))
+              (setq current-page (1+ current-page)))))))
+    ;; Fetch user's repositories
+    (let ((next-request t)
+          (current-page 1))
+      (while next-request
+        (let ((response (hgs/parse-github-response (hgs/request-github-repos current-page))))
+          (if (= 0 (length response))
+              (setq next-request nil)
+            (progn
+              (setq repos-list (vconcat repos-list response))
+              (setq current-page (1+ current-page)))))))
 
     (puthash '"stars" stars-list cache-hash-table)
     (puthash '"repos" repos-list cache-hash-table)
@@ -267,24 +251,18 @@ METHOD is a funcall symbol, call it for a list of stars and repos."
                               "/repos?per_page=100&page="
                               (number-to-string page))))
 
-(defun hgs/request-github-repos-by-token ()
-  "Request Github API user's repositories and return JSON response."
-  (let ((url-request-extra-headers `(("Authorization" .
-                                      ,(format "token %s" helm-github-stars-token)))))
-    (json-read-from-string
-     (hgs/request-github "https://api.github.com/user/repos"))))
-
-(defun hgs/request-github-stars-by-token ()
-  "Request Github API user's repositories and return JSON response."
-  (let ((url-request-extra-headers `(("Authorization" .
-                                      ,(format "token %s" helm-github-stars-token)))))
-    (json-read-from-string
-     (hgs/request-github "https://api.github.com/user/starred"))))
+(defun hgs/request-github-private-repos ()
+  "Request Github API user's private repositories, a token is required."
+  (hgs/request-github "https://api.github.com/user/repos"))
 
 (defun hgs/request-github (url)
   "Request Github URL and return response."
   (with-current-buffer
-      (url-retrieve-synchronously url)
+      (if helm-github-stars-token
+          (let ((url-request-extra-headers `(("Authorization" .
+                                              ,(format "token %s" helm-github-stars-token)))))
+            (url-retrieve-synchronously url))
+        (url-retrieve-synchronously url))
     (let ((start (save-excursion
                    (goto-char (point-min))
                    (and (re-search-forward "\\[" (point-max) t)
